@@ -4,11 +4,13 @@ import time
 from scraper import get_vacancy_image, analyze_job_with_gemini
 
 # DB Configuration (Pooler)
-DB_URL = os.getenv('DATABASE_URL', 'postgresql://postgres.zqoypncilcortflwtpqg:cBAconAV0RtSxBDr@aws-1-ap-northeast-1.pooler.supabase.com:5432/postgres')
+DB_URL = os.getenv('DATABASE_URL')
 
 def repair():
     print("\n--- Starting Database Repair (Link Normalization Edition) ---")
     try:
+        if not DB_URL:
+            raise RuntimeError("DATABASE_URL is not configured")
         conn = psycopg2.connect(DB_URL)
         cur = conn.cursor()
         
@@ -32,7 +34,7 @@ def repair():
                 normalized_link = link
                 
             # Step 1: Detect Image
-            image_url = get_vacancy_image(normalized_link)
+            image_url, page_email = get_vacancy_image(normalized_link, return_page_email=True)
             print(f"   - Detected Image: {image_url}")
             
             if not image_url:
@@ -41,7 +43,8 @@ def repair():
 
             # Step 2: Gemini Analysis
             print(f"   - Sending to Gemini AI...")
-            email, ai_desc = analyze_job_with_gemini(image_url, title)
+            ai_email, ai_desc = analyze_job_with_gemini(image_url, title)
+            email = ai_email or page_email
             
             if email:
                 cur.execute("UPDATE job_listings SET contact_email = %s, job_description = %s, job_link = %s WHERE id = %s", (email, ai_desc, normalized_link, job_id))

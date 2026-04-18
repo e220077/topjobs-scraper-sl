@@ -25,7 +25,7 @@ jobs:
       - name: Install Python Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install requests beautifulsoup4 psycopg2-binary pytesseract Pillow
+          pip install requests beautifulsoup4 psycopg2-binary pytesseract Pillow google-generativeai
 
       - name: Run Scraper
         env:

@@ -12,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 # Configuration
 URL = "https://www.topjobs.lk/applicant/vacancybyfunctionalarea.jsp?FA=IT"
 # Use environment variable for database connection
-DB_URL = os.getenv('DATABASE_URL', 'postgresql://postgres:cBAconAV0RtSxBDr@db.zqoypncilcortflwtpqg.supabase.co:5432/postgres')
+DB_URL = os.getenv('DATABASE_URL', 'postgresql://postgres.zqoypncilcortflwtpqg:cBAconAV0RtSxBDr@aws-1-ap-northeast-1.pooler.supabase.com:5432/postgres')
 
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',

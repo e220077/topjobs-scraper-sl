@@ -2,8 +2,8 @@ import psycopg2
 import sys
 import os
 
-# Supabase Database URL
-DB_URL = os.getenv('DATABASE_URL', 'postgresql://postgres:cBAconAV0RtSxBDr@db.zqoypncilcortflwtpqg.supabase.co:5432/postgres')
+# Supabase Database URL (Pooler for IPv4)
+DB_URL = os.getenv('DATABASE_URL', 'postgresql://postgres.zqoypncilcortflwtpqg:cBAconAV0RtSxBDr@aws-1-ap-northeast-1.pooler.supabase.com:5432/postgres')
 
 def init_db():
     """

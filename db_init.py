@@ -1,18 +1,13 @@
 import psycopg2
 import sys
+import os
 
-# Database Configuration
-DB_CONFIG = {
-    "dbname": "job",
-    "user": "batman",
-    "password": "dinal123",
-    "host": "localhost",
-    "port": "5432"
-}
+# Supabase Database URL
+DB_URL = os.getenv('DATABASE_URL', 'postgresql://postgres:cBAconAV0RtSxBDr@db.zqoypncilcortflwtpqg.supabase.co:5432/postgres')
 
 def init_db():
     """
-    Creates the 'job_listings' table in the PostgreSQL database.
+    Creates the 'job_listings' table in the Supabase PostgreSQL database.
     """
     commands = (
         """
@@ -28,8 +23,8 @@ def init_db():
     )
     conn = None
     try:
-        # connect to the PostgreSQL server
-        conn = psycopg2.connect(**DB_CONFIG)
+        # connect to the Supabase server
+        conn = psycopg2.connect(DB_URL)
         cur = conn.cursor()
         # create table one by one
         for command in commands:
@@ -38,7 +33,7 @@ def init_db():
         cur.close()
         # commit the changes
         conn.commit()
-        print("Database initialized successfully: Table 'job_listings' is ready.")
+        print("Database initialized successfully: Table 'job_listings' is now live on Supabase.")
     except (Exception, psycopg2.DatabaseError) as error:
         print(f"Error initializing database: {error}")
     finally:

@@ -18,6 +18,8 @@ def init_db():
             job_link TEXT UNIQUE NOT NULL,
             image_url TEXT,
             job_description TEXT,
+            contact_email VARCHAR(255),
+            application_sent BOOLEAN DEFAULT FALSE,
             scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         """,

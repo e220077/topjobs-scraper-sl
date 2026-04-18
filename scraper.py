@@ -93,13 +93,27 @@ def get_vacancy_image(job_link):
         res = requests.get(job_link, headers=HEADERS, timeout=15)
         soup = BeautifulSoup(res.text, 'html.parser')
         
+        images = []
         for img in soup.find_all('img'):
             src = img.get('src', '')
+            # Filter out known junk/system icons
+            if any(junk in src.lower() for junk in ['info.png', 'local.jpg', 'loading.gif', 'application.png', '_small']):
+                continue
+                
             if '/vacancies/' in src or '/logo/' in src:
+                full_src = src
                 if not src.startswith('http'):
-                    return 'https://www.topjobs.lk' + src if src.startswith('/') else 'https://www.topjobs.lk/employer/' + src
-                return src
-        return None
+                    full_src = 'https://www.topjobs.lk' + src if src.startswith('/') else 'https://www.topjobs.lk/employer/' + src
+                images.append(full_src)
+        
+        # PRIORITY LOGIC:
+        # 1. Images with a numeric subdirectory (e.g., /logo/000000492/...) are usually the actual Ads
+        for img in images:
+            if re.search(r'/logo/\d+/', img) or '/vacancies/' in img:
+                return img
+        
+        # 2. Fallback to the largest image found if no clear ad subdirectory
+        return images[0] if images else None
     except: return None
 
 def send_application_email(to_email, job_title, company_name):

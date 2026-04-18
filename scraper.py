@@ -10,7 +10,6 @@ from io import BytesIO
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Configuration
-# Updated to Software Development & Quality category
 URL = "https://www.topjobs.lk/applicant/vacancybyfunctionalarea.jsp?FA=SDQ"
 DB_URL = os.getenv('DATABASE_URL', 'postgresql://postgres.zqoypncilcortflwtpqg:cBAconAV0RtSxBDr@aws-1-ap-northeast-1.pooler.supabase.com:5432/postgres')
 
@@ -19,8 +18,10 @@ HEADERS = {
     'Referer': 'https://www.topjobs.lk/'
 }
 
-# Core tech stack from your resume
 TARGET_SKILLS = ['Spring Boot', 'Spring Batch', 'Node.js', 'AWS', 'Docker', 'Kubernetes', 'React', 'Angular', 'Java', 'Python', 'PostgreSQL', 'MySQL', 'MongoDB', 'REST', 'GraphQL']
+
+# Words that indicate a job is definitely NOT what we want
+FORBIDDEN_TITLES = ['Relationship', 'Sales', 'Accountant', 'Marketing', 'Customer', 'Steward', 'Chef', 'Driver', 'Pharmacy']
 
 def save_job(job_data):
     sql = """INSERT INTO job_listings(title, company, job_link, image_url, job_description)
@@ -32,15 +33,15 @@ def save_job(job_data):
         cur.execute(sql, (job_data['title'], job_data['company'], job_data['link'], job_data['image_url'], job_data['job_description']))
         conn.commit()
         cur.close()
-    except (Exception, psycopg2.DatabaseError) as error:
+    except Exception as error:
         print(f"DB Error: {error}")
     finally:
-        if conn is not None:
-            conn.close()
+        if conn is not None: conn.close()
 
-def get_vacancy_data(job_link):
+def get_clean_vacancy_content(job_link):
     """
-    Extracts the image and the CLEAN text from only the vacancy advertisement area.
+    Extracts the image URL and the OCR text from the image ONLY.
+    This avoids all the sidebar 'junk' text.
     """
     try:
         if not job_link.startswith('http'):
@@ -49,49 +50,43 @@ def get_vacancy_data(job_link):
         res = requests.get(job_link, headers=HEADERS, timeout=15)
         soup = BeautifulSoup(res.text, 'html.parser')
         
-        # 1. Extract Image
+        # 1. Find the actual vacancy advertisement image
         image_url = None
         img_tags = soup.find_all('img')
         for img in img_tags:
             src = img.get('src', '')
-            if '/vacancies/' in src or '/logos/' in src:
+            # Topjobs stores real vacancy ads in these specific folders
+            if '/vacancies/' in src or '/logo/' in src:
                 if not src.startswith('http'):
                     image_url = 'https://www.topjobs.lk' + src if src.startswith('/') else 'https://www.topjobs.lk/employer/' + src
                 else:
                     image_url = src
                 break
         
-        # 2. Extract ONLY the vacancy content text (avoiding sidebar/header)
-        # In TopJobs, vacancy content is usually in a central table or specific div
-        # We target the main tables and exclude the 'category' sidebar
-        content_text = ""
-        main_content = soup.find('div', id='vacancy-container') or soup.find('table', class_='bx')
-        
-        if main_content:
-            content_text = main_content.get_text(separator=' ', strip=True)
-        else:
-            # Fallback: Find the largest block of text that doesn't look like a menu
-            paragraphs = [p.get_text() for p in soup.find_all(['td', 'p', 'div']) if len(p.get_text()) > 100]
-            content_text = " ".join(paragraphs)
+        # 2. If image found, run OCR to get the text. This is the BEST source of truth.
+        ocr_text = ""
+        if image_url:
+            try:
+                img_res = requests.get(image_url, headers=HEADERS, timeout=15)
+                img = Image.open(BytesIO(img_res.content))
+                ocr_text = pytesseract.image_to_string(img)
+                print(f"   [OCR] Successfully read image for {image_url[:50]}...")
+            except:
+                pass
+                
+        # 3. If no image or OCR failed, try to get text from the middle column only
+        # We look for the main table and ignore the 'category-menu'
+        if not ocr_text:
+            main_table = soup.find('table', class_='bx')
+            if main_table:
+                # Remove common sidebar elements if they got caught
+                for sidebar in main_table.find_all(['ul', 'nav']): sidebar.decompose()
+                ocr_text = main_table.get_text(separator=' ', strip=True)
 
-        return image_url, content_text
+        return image_url, ocr_text
     except Exception as e:
-        print(f"Error fetching detail page {job_link}: {e}")
+        print(f"Error fetching detail page: {e}")
         return None, ""
-
-def match_job_with_ocr(image_url):
-    if not image_url: return False
-    try:
-        response = requests.get(image_url, headers=HEADERS, timeout=20)
-        img = Image.open(BytesIO(response.content))
-        text = pytesseract.image_to_string(img).lower()
-        for skill in TARGET_SKILLS:
-            if skill.lower() in text:
-                print(f"   [OCR Match] {skill}")
-                return True
-        return False
-    except Exception as e:
-        return False
 
 def process_single_job(tr, alert_pattern):
     try:
@@ -102,63 +97,59 @@ def process_single_job(tr, alert_pattern):
         i, ac, jc, ec, _id = match.groups()
         job_link = f"../employer/JobAdvertismentServlet?rid={i}&ac={ac}&jc={jc}&ec={ec}&pg=applicant/vacancybyfunctionalarea.jsp"
         
-        # Parse table cells for Company and Title
         tds = tr.find_all('td')
         if len(tds) < 3: return False
         
         company_name = tds[1].get_text(strip=True)
         job_title = tds[2].get_text(strip=True)
         
+        # FIRST FILTER: Check if the title is relevant
+        if any(f.lower() in job_title.lower() for f in FORBIDDEN_TITLES):
+            return False
+
         print(f"Checking: {job_title} at {company_name}")
         
-        image_url, clean_description = get_vacancy_data(job_link)
+        # Get Image and OCR Text (this is the clean description)
+        image_url, clean_description = get_clean_vacancy_content(job_link)
         
-        # Check text match in clean description first
+        # Match against skills in the CLEAN text
         text_match = False
         for skill in TARGET_SKILLS:
             if skill.lower() in clean_description.lower():
                 text_match = True
-                print(f"   [Text Match] {skill}")
+                print(f"   -> Match found: {skill}")
                 break
         
-        # If no text match, try OCR on the image
-        if not text_match and image_url:
-            text_match = match_job_with_ocr(image_url)
-        
         if text_match:
-            print(f"   -> MATCH! Storing in Supabase.")
             job_data = {
                 'title': job_title,
                 'company': company_name,
                 'link': 'https://www.topjobs.lk/applicant/' + job_link.replace('../', ''),
                 'image_url': image_url,
-                'job_description': clean_description[:2000] # Limit size
+                'job_description': clean_description.strip()
             }
             save_job(job_data)
             return True
         return False
-    except Exception as e:
+    except Exception:
         return False
 
 def scrape_topjobs():
-    print(f"Scraping TopJobs SDQ category (Software Development & Quality)...")
+    print(f"Scraping TopJobs SDQ (Clean Edition)...")
     try:
         res = requests.get(URL, headers=HEADERS, timeout=20)
         soup = BeautifulSoup(res.text, 'html.parser')
         
         alert_pattern = re.compile(r"createAlert\('([^']+)','([^']+)','([^']+)','([^']+)','([^']+)'\)")
-        job_rows = soup.find_all('tr', id=re.compile(r'tr\d+')) # Target job rows specifically
+        job_rows = soup.find_all('tr', id=re.compile(r'tr\d+')) 
         
         match_count = 0
-        print(f"Found {len(job_rows)} Software jobs. Scanning now...")
-
         with ThreadPoolExecutor(max_workers=5) as executor:
             futures = [executor.submit(process_single_job, tr, alert_pattern) for tr in job_rows]
             for future in as_completed(futures):
-                if future.result():
-                    match_count += 1
+                if future.result(): match_count += 1
             
-        print(f"\nCompleted! Found {match_count} jobs matching your tech stack.")
+        print(f"\nFinished! Found {match_count} relevant engineering jobs.")
     except Exception as e:
         print(f"Scraper Error: {e}")
 

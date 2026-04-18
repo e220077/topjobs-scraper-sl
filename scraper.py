@@ -121,12 +121,13 @@ def send_application_email(to_email, job_title, company_name):
         part.add_header("Content-Disposition", f"attachment; filename= {os.path.basename(CV_PATH)}")
         msg.attach(part)
         
-        # SAFETY LOCK: Commented out for local testing
-        # with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
-        #     server.login(EMAIL_SENDER, EMAIL_PASSWORD)
-        #     server.sendmail(EMAIL_SENDER, to_email, msg.as_string())
-        print(f"   [TEST MODE] Would have sent CV to {to_email}")
+        # Real email sending enabled
+        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
+            server.login(EMAIL_SENDER, EMAIL_PASSWORD)
+            server.sendmail(EMAIL_SENDER, to_email, msg.as_string())
+        print(f"   [Success] CV sent to {to_email}")
         return True
+
     except Exception as e:
         print(f"   [Email Error]: {e}")
         return False

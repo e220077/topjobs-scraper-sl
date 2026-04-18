@@ -5,7 +5,7 @@ import time
 import re
 import os
 import pytesseract
-from PIL import Image
+from PIL import Image, ImageOps, ImageEnhance
 from io import BytesIO
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import smtplib
@@ -19,7 +19,6 @@ CATEGORIES = ["SDQ", "IT", "HNS"]
 URL_TEMPLATE = "https://www.topjobs.lk/applicant/vacancybyfunctionalarea.jsp?FA={}"
 DB_URL = os.getenv('DATABASE_URL', 'postgresql://postgres.zqoypncilcortflwtpqg:cBAconAV0RtSxBDr@aws-1-ap-northeast-1.pooler.supabase.com:5432/postgres')
 
-# Email Configuration for Auto-Apply
 EMAIL_SENDER = os.getenv('EMAIL_SENDER', 'dnlmdrng@gmail.com')
 EMAIL_PASSWORD = os.getenv('EMAIL_PASSWORD', '#Digital4491')
 CV_PATH = "Dinal Maduranga.pdf"
@@ -29,22 +28,19 @@ HEADERS = {
     'Referer': 'https://www.topjobs.lk/'
 }
 
-TARGET_SKILLS = ['Spring Boot', 'Spring Batch', 'Spring', 'Node.js', 'AWS', 'Docker', 'Kubernetes', 'React', 'Angular', 'Java', 'JEE', 'Python', 'PostgreSQL', 'MySQL', 'MongoDB', 'REST', 'GraphQL']
+# Profile Alignment
+TARGET_SKILLS = ['Spring Boot', 'Spring Batch', 'Spring', 'Node.js', 'AWS', 'Docker', 'Kubernetes', 'React', 'Angular', 'Java', 'JEE', 'Python', 'PostgreSQL', 'MySQL', 'MongoDB', 'REST', 'GraphQL', 'SQL']
 FORBIDDEN_TITLES = ['Relationship', 'Sales', 'Accountant', 'Marketing', 'Customer', 'Steward', 'Chef', 'Driver', 'Pharmacy', 'Restaurant', 'Waiter', 'Cashier', 'Hostess']
+# Reject if these are found (Competing primary stacks)
+FORBIDDEN_SKILLS = ['.net', 'c#', 'php', 'laravel', 'flutter', 'ruby', 'c++', 'asp.net', 'golang', 'rust']
 
 def extract_email(text):
-    """
-    Finds email addresses in text using fuzzy regex to handle OCR artifacts.
-    Handles 'careers @ company . com' or 'careers(at)company.com'
-    """
     if not text: return None
-    # Replace common OCR aliases for @
-    text = re.sub(r'[\(\[]at[\)\]]', '@', text, flags=re.IGNORECASE)
-    # Match with potential spaces around dots and @
-    pattern = r'[a-zA-Z0-9._+-]+\s*@\s*[a-zA-Z0-9-]+\s*\.\s*[a-zA-Z0-9-.]+'
-    matches = re.findall(pattern, text)
+    clean_text = re.sub(r'[\(\[]at[\)\]]', '@', text, flags=re.IGNORECASE)
+    pattern = r'[a-zA-Z0-9._+-]+\s*[@©]\s*[a-zA-Z0-9-]+\s*[\.\,]\s*[a-zA-Z0-9-.]+'
+    matches = re.findall(pattern, clean_text)
     if matches:
-        email = re.sub(r'\s+', '', matches[0]).lower()
+        email = re.sub(r'\s+', '', matches[0]).replace('©', '@').replace(',', '.').lower()
         return email
     return None
 
@@ -69,11 +65,8 @@ def get_clean_vacancy_content(job_link):
             job_link = 'https://www.topjobs.lk/applicant/' + job_link.replace('../', '')
         res = requests.get(job_link, headers=HEADERS, timeout=15)
         soup = BeautifulSoup(res.text, 'html.parser')
-        
-        # STRENGTHENED: Delete ALL navigational/junk elements to avoid false matches
         for junk in soup.find_all(['ul', 'nav', 'header', 'footer', 'script', 'style', 'button']):
             junk.decompose()
-        
         image_url = None
         img_tags = soup.find_all('img')
         for img in img_tags:
@@ -84,29 +77,28 @@ def get_clean_vacancy_content(job_link):
                 else:
                     image_url = src
                 break
-        
         ocr_text = ""
         if image_url:
             try:
                 img_res = requests.get(image_url, headers=HEADERS, timeout=15)
                 img = Image.open(BytesIO(img_res.content))
-                ocr_text = pytesseract.image_to_string(img)
-            except:
-                pass
-                
+                img = img.convert('L')
+                img = ImageOps.invert(img) if img.getpixel((0,0)) < 128 else img
+                enhancer = ImageEnhance.Contrast(img)
+                img = enhancer.enhance(2.0)
+                ocr_text = pytesseract.image_to_string(img, config='--psm 3')
+            except: pass
         if not ocr_text:
             main_table = soup.find('table', class_='bx')
             if main_table:
                 ocr_text = main_table.get_text(separator=' ', strip=True)
-
         return image_url, ocr_text
     except Exception as e:
         print(f"Error fetching detail page: {e}")
         return None, ""
 
 def send_application_email(to_email, job_title, company_name):
-    if not os.path.exists(CV_PATH):
-        return False
+    if not os.path.exists(CV_PATH): return False
     msg = MIMEMultipart()
     msg['From'] = EMAIL_SENDER
     msg['To'] = to_email
@@ -120,14 +112,11 @@ def send_application_email(to_email, job_title, company_name):
         encoders.encode_base64(part)
         part.add_header("Content-Disposition", f"attachment; filename= {os.path.basename(CV_PATH)}")
         msg.attach(part)
-        
-        # Real email sending enabled
         with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
             server.login(EMAIL_SENDER, EMAIL_PASSWORD)
             server.sendmail(EMAIL_SENDER, to_email, msg.as_string())
         print(f"   [Success] CV sent to {to_email}")
         return True
-
     except Exception as e:
         print(f"   [Email Error]: {e}")
         return False
@@ -147,12 +136,18 @@ def process_single_job(tr, alert_pattern):
         if any(f.lower() in job_title.lower() for f in FORBIDDEN_TITLES): return False
 
         image_url, clean_description = get_clean_vacancy_content(job_link)
-        contact_email = extract_email(clean_description)
         search_blob = f"{job_title} {clean_description}".lower()
+        
+        # STRICT FILTER: Reject if any forbidden stack is mentioned (even if React matches)
+        if any(bad_skill.lower() in search_blob for bad_skill in FORBIDDEN_SKILLS):
+            return False
+
+        # Match skills against Title OR Clean Description
         text_match = any(skill.lower() in search_blob for skill in TARGET_SKILLS)
         
         if text_match:
-            print(f"Matched: {job_title} at {company_name} (Email: {contact_email})")
+            contact_email = extract_email(clean_description)
+            print(f"Matched: {job_title} at {company_name} | Email Found: {contact_email}")
             save_job({
                 'title': job_title, 'company': company_name, 'link': 'https://www.topjobs.lk/applicant/' + job_link.replace('../', ''),
                 'image_url': image_url, 'job_description': clean_description.strip(), 'contact_email': contact_email
@@ -170,6 +165,7 @@ def auto_apply_jobs():
         cur.execute("SELECT id, title, company, contact_email FROM job_listings WHERE contact_email IS NOT NULL AND application_sent = FALSE;")
         pending_jobs = cur.fetchall()
         for job_id, title, company, email in pending_jobs:
+            print(f"Applying to {title} at {company} ({email})...")
             if send_application_email(email, title, company):
                 cur.execute("UPDATE job_listings SET application_sent = TRUE WHERE id = %s;", (job_id,))
                 conn.commit()
@@ -179,7 +175,7 @@ def auto_apply_jobs():
         if conn is not None: conn.close()
 
 def scrape_topjobs():
-    print(f"Scraping TopJobs IT (Auto-Apply Edition)...")
+    print(f"Scraping TopJobs (High-Res OCR Edition)...")
     for category in CATEGORIES:
         print(f"--- Category: {category} ---")
         try:

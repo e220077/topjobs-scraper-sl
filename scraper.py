@@ -41,21 +41,11 @@ FORBIDDEN_SKILLS = ['.net', 'c#', 'php', 'laravel', 'flutter', 'ruby', 'c++', 'a
 def analyze_job_with_gemini(image_url, job_title):
     if not image_url: return None, ""
     try:
-        # Properly encode URL to handle spaces in filenames
         encoded_url = urllib.parse.quote(image_url, safe=':/?&=')
         response = requests.get(encoded_url, headers=HEADERS, timeout=20)
         img = Image.open(BytesIO(response.content))
-        
-        prompt = f"""
-        Extract application info for: {job_title}
-        1. email: Find the email address to apply to.
-        2. skills: List key technical skills mentioned.
-        
-        Return JSON ONLY: {{"email": "...", "skills": ["...", "..."]}}
-        """
-        
+        prompt = f"Extract application info for: {job_title}\n1. email: Find the email address to apply to.\n2. skills: List key technical skills mentioned.\n\nReturn JSON ONLY: {{\"email\": \"...\", \"skills\": [\"...\", \"...\"]}}"
         ai_response = model.generate_content([prompt, img])
-        # Strip potential markdown formatting from AI response
         clean_json = ai_response.text.strip().replace('```json', '').replace('```', '').strip()
         data = json.loads(clean_json)
         return data.get('email'), ", ".join(data.get('skills', []))
@@ -84,8 +74,10 @@ def save_job(job_data):
 
 def get_vacancy_image(job_link):
     try:
-        if not job_link.startswith('http'):
-            job_link = 'https://www.topjobs.lk/applicant/' + job_link.replace('../', '')
+        # Correctly normalize the link (ensure no /applicant/ prefix for the servlet)
+        if 'JobAdvertismentServlet' in job_link:
+            job_link = 'https://www.topjobs.lk/employer/' + job_link.split('JobAdvertismentServlet')[-1]
+        
         res = requests.get(job_link, headers=HEADERS, timeout=15)
         soup = BeautifulSoup(res.text, 'html.parser')
         
@@ -134,7 +126,9 @@ def process_single_job(tr, alert_pattern):
         match = alert_pattern.search(onclick_content)
         if not match: return None
         i, ac, jc, ec, _id = match.groups()
-        job_link = f"../employer/JobAdvertismentServlet?rid={i}&ac={ac}&jc={jc}&ec={ec}&pg=applicant/vacancybyfunctionalarea.jsp"
+        # FIXED: Use the correct root path
+        job_link = f"https://www.topjobs.lk/employer/JobAdvertismentServlet?rid={i}&ac={ac}&jc={jc}&ec={ec}&pg=applicant/vacancybyfunctionalarea.jsp"
+        
         tds = tr.find_all('td')
         if len(tds) < 3: return False
         title_cell = tds[2]
@@ -152,7 +146,7 @@ def process_single_job(tr, alert_pattern):
         if any(skill.lower() in search_blob for skill in TARGET_SKILLS):
             print(f"   -> AI MATCH! Email: {contact_email}")
             save_job({
-                'title': job_title, 'company': company_name, 'link': 'https://www.topjobs.lk/applicant/' + job_link.replace('../', ''),
+                'title': job_title, 'company': company_name, 'link': job_link,
                 'image_url': image_url, 'job_description': ai_description, 'contact_email': contact_email
             })
             return True

@@ -10,8 +10,8 @@ from io import BytesIO
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Configuration
-URL = "https://www.topjobs.lk/applicant/vacancybyfunctionalarea.jsp?FA=IT"
-# Use environment variable for database connection
+# Updated to Software Development & Quality category
+URL = "https://www.topjobs.lk/applicant/vacancybyfunctionalarea.jsp?FA=SDQ"
 DB_URL = os.getenv('DATABASE_URL', 'postgresql://postgres.zqoypncilcortflwtpqg:cBAconAV0RtSxBDr@aws-1-ap-northeast-1.pooler.supabase.com:5432/postgres')
 
 HEADERS = {
@@ -19,13 +19,10 @@ HEADERS = {
     'Referer': 'https://www.topjobs.lk/'
 }
 
-# Key technologies to match
-TARGET_SKILLS = ['Spring Boot', 'Spring Batch', 'Node.js', 'AWS', 'Docker', 'Kubernetes', 'React', 'Angular', 'Java', 'Python', 'SQL', 'PostgreSQL', 'MySQL', 'MongoDB', 'REST', 'GraphQL']
+# Core tech stack from your resume
+TARGET_SKILLS = ['Spring Boot', 'Spring Batch', 'Node.js', 'AWS', 'Docker', 'Kubernetes', 'React', 'Angular', 'Java', 'Python', 'PostgreSQL', 'MySQL', 'MongoDB', 'REST', 'GraphQL']
 
 def save_job(job_data):
-    """
-    Saves job record to Supabase PostgreSQL database.
-    """
     sql = """INSERT INTO job_listings(title, company, job_link, image_url, job_description)
              VALUES(%s, %s, %s, %s, %s) ON CONFLICT (job_link) DO NOTHING;"""
     conn = None
@@ -43,7 +40,7 @@ def save_job(job_data):
 
 def get_vacancy_data(job_link):
     """
-    Crawls the vacancy detail page to find the advertisement image and page text.
+    Extracts the image and the CLEAN text from only the vacancy advertisement area.
     """
     try:
         if not job_link.startswith('http'):
@@ -52,6 +49,7 @@ def get_vacancy_data(job_link):
         res = requests.get(job_link, headers=HEADERS, timeout=15)
         soup = BeautifulSoup(res.text, 'html.parser')
         
+        # 1. Extract Image
         image_url = None
         img_tags = soup.find_all('img')
         for img in img_tags:
@@ -63,39 +61,39 @@ def get_vacancy_data(job_link):
                     image_url = src
                 break
         
-        page_text = soup.get_text()
-        return image_url, page_text
+        # 2. Extract ONLY the vacancy content text (avoiding sidebar/header)
+        # In TopJobs, vacancy content is usually in a central table or specific div
+        # We target the main tables and exclude the 'category' sidebar
+        content_text = ""
+        main_content = soup.find('div', id='vacancy-container') or soup.find('table', class_='bx')
+        
+        if main_content:
+            content_text = main_content.get_text(separator=' ', strip=True)
+        else:
+            # Fallback: Find the largest block of text that doesn't look like a menu
+            paragraphs = [p.get_text() for p in soup.find_all(['td', 'p', 'div']) if len(p.get_text()) > 100]
+            content_text = " ".join(paragraphs)
+
+        return image_url, content_text
     except Exception as e:
         print(f"Error fetching detail page {job_link}: {e}")
         return None, ""
 
 def match_job_with_ocr(image_url):
-    """
-    Downloads image, performs OCR, and checks if any target skill is present.
-    """
-    if not image_url:
-        return False
-        
+    if not image_url: return False
     try:
         response = requests.get(image_url, headers=HEADERS, timeout=20)
         img = Image.open(BytesIO(response.content))
-        
-        # Perform OCR
         text = pytesseract.image_to_string(img).lower()
-        
         for skill in TARGET_SKILLS:
             if skill.lower() in text:
                 print(f"   [OCR Match] {skill}")
                 return True
         return False
     except Exception as e:
-        print(f"   OCR Error for {image_url}: {e}")
         return False
 
 def process_single_job(tr, alert_pattern):
-    """
-    Worker function for multi-threaded processing.
-    """
     try:
         onclick_content = tr.get('onclick', '')
         match = alert_pattern.search(onclick_content)
@@ -104,57 +102,55 @@ def process_single_job(tr, alert_pattern):
         i, ac, jc, ec, _id = match.groups()
         job_link = f"../employer/JobAdvertismentServlet?rid={i}&ac={ac}&jc={jc}&ec={ec}&pg=applicant/vacancybyfunctionalarea.jsp"
         
-        company_name = "Unknown Company"
-        job_title = "Untitled Position"
+        # Parse table cells for Company and Title
         tds = tr.find_all('td')
-        if len(tds) > 2:
-            texts = [td.get_text(strip=True) for td in tds if td.get_text(strip=True)]
-            if len(texts) > 2:
-                company_name = texts[1]
-                job_title = texts[2]
+        if len(tds) < 3: return False
+        
+        company_name = tds[1].get_text(strip=True)
+        job_title = tds[2].get_text(strip=True)
         
         print(f"Checking: {job_title} at {company_name}")
         
-        image_url, page_text = get_vacancy_data(job_link)
+        image_url, clean_description = get_vacancy_data(job_link)
         
-        # Check text first
+        # Check text match in clean description first
         text_match = False
         for skill in TARGET_SKILLS:
-            if skill.lower() in page_text.lower():
+            if skill.lower() in clean_description.lower():
                 text_match = True
-                print(f"   [Text Match] {job_title}: {skill}")
+                print(f"   [Text Match] {skill}")
                 break
         
-        # Then OCR
+        # If no text match, try OCR on the image
         if not text_match and image_url:
             text_match = match_job_with_ocr(image_url)
         
         if text_match:
+            print(f"   -> MATCH! Storing in Supabase.")
             job_data = {
                 'title': job_title,
                 'company': company_name,
                 'link': 'https://www.topjobs.lk/applicant/' + job_link.replace('../', ''),
                 'image_url': image_url,
-                'job_description': page_text
+                'job_description': clean_description[:2000] # Limit size
             }
             save_job(job_data)
             return True
         return False
     except Exception as e:
-        print(f"Worker Error: {e}")
         return False
 
 def scrape_topjobs():
-    print(f"Scraping TopJobs IT category (Cloud Edition)...")
+    print(f"Scraping TopJobs SDQ category (Software Development & Quality)...")
     try:
         res = requests.get(URL, headers=HEADERS, timeout=20)
         soup = BeautifulSoup(res.text, 'html.parser')
         
         alert_pattern = re.compile(r"createAlert\('([^']+)','([^']+)','([^']+)','([^']+)','([^']+)'\)")
-        job_rows = soup.find_all('tr', onclick=re.compile(r'createAlert'))
+        job_rows = soup.find_all('tr', id=re.compile(r'tr\d+')) # Target job rows specifically
         
         match_count = 0
-        print(f"Found {len(job_rows)} entries. Processing with parallel threads...")
+        print(f"Found {len(job_rows)} Software jobs. Scanning now...")
 
         with ThreadPoolExecutor(max_workers=5) as executor:
             futures = [executor.submit(process_single_job, tr, alert_pattern) for tr in job_rows]
@@ -162,7 +158,7 @@ def scrape_topjobs():
                 if future.result():
                     match_count += 1
             
-        print(f"\nFinal Result: Found {match_count} jobs matching your profile.")
+        print(f"\nCompleted! Found {match_count} jobs matching your tech stack.")
     except Exception as e:
         print(f"Scraper Error: {e}")
 

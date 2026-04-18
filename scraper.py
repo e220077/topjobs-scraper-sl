@@ -10,8 +10,8 @@ from io import BytesIO
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Configuration
-# Scan both Software Development and general IT categories to avoid missing jobs
-CATEGORIES = ["SDQ", "IT"]
+# Scan Software Development, general IT, and HNS categories to avoid missing jobs
+CATEGORIES = ["SDQ", "IT", "HNS"]
 URL_TEMPLATE = "https://www.topjobs.lk/applicant/vacancybyfunctionalarea.jsp?FA={}"
 DB_URL = os.getenv('DATABASE_URL', 'postgresql://postgres.zqoypncilcortflwtpqg:cBAconAV0RtSxBDr@aws-1-ap-northeast-1.pooler.supabase.com:5432/postgres')
 

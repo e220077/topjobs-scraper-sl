@@ -1,6 +1,6 @@
 import os
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, mock_open, patch
 
 import scraper
 
@@ -26,6 +26,22 @@ class RuntimeConfigTests(unittest.TestCase):
     )
     def test_get_missing_env_vars_returns_empty_when_all_present(self):
         self.assertEqual(scraper.get_missing_env_vars(), [])
+
+    @patch("scraper.os.path.exists", return_value=True)
+    @patch("builtins.open", new_callable=mock_open, read_data=b"cv-content")
+    @patch("scraper.smtplib.SMTP_SSL")
+    def test_send_email_normalizes_spaced_app_password(
+        self, smtp_cls, _open_mock, _exists_mock
+    ):
+        smtp = MagicMock()
+        smtp_cls.return_value.__enter__.return_value = smtp
+
+        with patch("scraper.EMAIL_SENDER", "me@example.com"), patch(
+            "scraper.EMAIL_PASSWORD", "abcd efgh ijkl mnop"
+        ):
+            scraper.send_application_email("to@example.com", "Role", "Company")
+
+        smtp.login.assert_called_once_with("me@example.com", "abcdefghijklmnop")
 
 
 if __name__ == "__main__":

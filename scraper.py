@@ -281,9 +281,13 @@ def send_application_email(to_email, job_title, company_name):
     if not EMAIL_SENDER or not EMAIL_PASSWORD:
         print("   [Email Error]: EMAIL_SENDER/EMAIL_PASSWORD not configured")
         return False
+    smtp_password = EMAIL_PASSWORD.replace(" ", "").strip()
+    if not smtp_password:
+        print("   [Email Error]: EMAIL_PASSWORD is empty after normalization")
+        return False
     if not os.path.exists(CV_PATH): return False
     msg = MIMEMultipart()
-    msg['From'] = EMAIL_SENDER
+    msg['From'] = EMAIL_SENDER.strip()
     msg['To'] = to_email
     msg['Subject'] = f"Application for {job_title} - Dinal Maduranga"
     body = f"Dear Hiring Manager at {company_name},\n\nI am writing to express my interest in the {job_title} position. Please find my CV attached.\n\nBest regards,\nDinal Maduranga"
@@ -296,8 +300,8 @@ def send_application_email(to_email, job_title, company_name):
         part.add_header("Content-Disposition", f"attachment; filename= {os.path.basename(CV_PATH)}")
         msg.attach(part)
         with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
-            server.login(EMAIL_SENDER, EMAIL_PASSWORD)
-            server.sendmail(EMAIL_SENDER, to_email, msg.as_string())
+            server.login(msg['From'], smtp_password)
+            server.sendmail(msg['From'], to_email, msg.as_string())
         print(f"   [Success] CV sent to {to_email}")
         return True
     except Exception as e: print(f"   [Email Error]: {e}"); return False

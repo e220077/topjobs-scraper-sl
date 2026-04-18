@@ -88,26 +88,31 @@ def process_single_job(tr, alert_pattern):
         
         i, ac, jc, ec, _id = match.groups()
         job_link = f"../employer/JobAdvertismentServlet?rid={i}&ac={ac}&jc={jc}&ec={ec}&pg=applicant/vacancybyfunctionalarea.jsp"
-        
+        # Correct parsing for TopJobs structure
+        # td[0]=Index, td[1]=ID, td[2]=Title(h2) & Company(h1)
         tds = tr.find_all('td')
         if len(tds) < 3: return False
-        
-        company_name = tds[1].get_text(strip=True)
-        job_title = tds[2].get_text(strip=True)
-        
+
+        title_cell = tds[2]
+        job_title = title_cell.find('h2').get_text(strip=True) if title_cell.find('h2') else "Untitled Position"
+        company_name = title_cell.find('h1').get_text(strip=True) if title_cell.find('h1') else "Unknown Company"
+
         if any(f.lower() in job_title.lower() for f in FORBIDDEN_TITLES):
             return False
 
         print(f"Checking: {job_title} at {company_name}")
-        
+
         image_url, clean_description = get_clean_vacancy_content(job_link)
-        
+
+        # Match skills against Title OR Clean Description (OCR text)
+        search_blob = f"{job_title} {clean_description}".lower()
         text_match = False
         for skill in TARGET_SKILLS:
-            if skill.lower() in clean_description.lower():
+            if skill.lower() in search_blob:
                 text_match = True
                 print(f"   -> Match found: {skill}")
                 break
+
         
         if text_match:
             job_data = {

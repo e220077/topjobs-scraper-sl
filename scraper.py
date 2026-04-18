@@ -69,7 +69,12 @@ def analyze_job_with_gemini(image_url, job_title):
 
 def save_job(job_data):
     sql = """INSERT INTO job_listings(title, company, job_link, image_url, job_description, contact_email)
-             VALUES(%s, %s, %s, %s, %s, %s) ON CONFLICT (job_link) DO NOTHING;"""
+             VALUES(%s, %s, %s, %s, %s, %s) 
+             ON CONFLICT (job_link) 
+             DO UPDATE SET 
+                contact_email = EXCLUDED.contact_email,
+                job_description = EXCLUDED.job_description
+             WHERE job_listings.contact_email IS NULL;"""
     conn = None
     try:
         conn = psycopg2.connect(DB_URL)

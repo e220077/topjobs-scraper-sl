@@ -17,6 +17,7 @@ def init_db():
             company VARCHAR(255),
             job_link TEXT UNIQUE NOT NULL,
             image_url TEXT,
+            job_description TEXT,
             scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         """,

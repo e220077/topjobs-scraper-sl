@@ -26,13 +26,13 @@ def save_job(job_data):
     """
     Saves job record to Supabase PostgreSQL database.
     """
-    sql = """INSERT INTO job_listings(title, company, job_link, image_url)
-             VALUES(%s, %s, %s, %s) ON CONFLICT (job_link) DO NOTHING;"""
+    sql = """INSERT INTO job_listings(title, company, job_link, image_url, job_description)
+             VALUES(%s, %s, %s, %s, %s) ON CONFLICT (job_link) DO NOTHING;"""
     conn = None
     try:
         conn = psycopg2.connect(DB_URL)
         cur = conn.cursor()
-        cur.execute(sql, (job_data['title'], job_data['company'], job_data['link'], job_data['image_url']))
+        cur.execute(sql, (job_data['title'], job_data['company'], job_data['link'], job_data['image_url'], job_data['job_description']))
         conn.commit()
         cur.close()
     except (Exception, psycopg2.DatabaseError) as error:
@@ -134,7 +134,8 @@ def process_single_job(tr, alert_pattern):
                 'title': job_title,
                 'company': company_name,
                 'link': 'https://www.topjobs.lk/applicant/' + job_link.replace('../', ''),
-                'image_url': image_url
+                'image_url': image_url,
+                'job_description': page_text
             }
             save_job(job_data)
             return True

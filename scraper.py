@@ -14,18 +14,17 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email import encoders
 import json
+import urllib.parse
 
 # Configuration
 CATEGORIES = ["SDQ", "IT", "HNS"]
 URL_TEMPLATE = "https://www.topjobs.lk/applicant/vacancybyfunctionalarea.jsp?FA={}"
 DB_URL = os.getenv('DATABASE_URL', 'postgresql://postgres.zqoypncilcortflwtpqg:cBAconAV0RtSxBDr@aws-1-ap-northeast-1.pooler.supabase.com:5432/postgres')
 
-# Gemini AI Configuration
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', 'AIzaSyAEP1ExvISZm17XzDxqy9BHmuYH9-viSYA')
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel('gemini-flash-latest')
 
-# Email Configuration for Auto-Apply
 EMAIL_SENDER = os.getenv('EMAIL_SENDER', 'dnlmdrng@gmail.com')
 EMAIL_PASSWORD = os.getenv('EMAIL_PASSWORD', '#Digital4491')
 CV_PATH = "Dinal Maduranga.pdf"
@@ -35,36 +34,33 @@ HEADERS = {
     'Referer': 'https://www.topjobs.lk/'
 }
 
-# Profile Alignment
 TARGET_SKILLS = ['Spring Boot', 'Spring Batch', 'Spring', 'Node.js', 'AWS', 'Docker', 'Kubernetes', 'React', 'Angular', 'Java', 'JEE', 'Python', 'PostgreSQL', 'MySQL', 'MongoDB', 'REST', 'GraphQL', 'SQL']
 FORBIDDEN_TITLES = ['Relationship', 'Sales', 'Accountant', 'Marketing', 'Customer', 'Steward', 'Chef', 'Driver', 'Pharmacy', 'Restaurant', 'Waiter', 'Cashier', 'Hostess']
 FORBIDDEN_SKILLS = ['.net', 'c#', 'php', 'laravel', 'flutter', 'ruby', 'c++', 'asp.net', 'golang', 'rust']
 
 def analyze_job_with_gemini(image_url, job_title):
-    """
-    Sends the job image to Gemini to extract email and technical skills.
-    """
     if not image_url: return None, ""
-    
     try:
-        response = requests.get(image_url, headers=HEADERS, timeout=20)
+        # Properly encode URL to handle spaces in filenames
+        encoded_url = urllib.parse.quote(image_url, safe=':/?&=')
+        response = requests.get(encoded_url, headers=HEADERS, timeout=20)
         img = Image.open(BytesIO(response.content))
         
         prompt = f"""
-        Analyze this job advertisement image for the position: {job_title}.
-        1. Extract the primary contact email address for applications.
-        2. List all technical skills and technologies required.
+        Extract application info for: {job_title}
+        1. email: Find the email address to apply to.
+        2. skills: List key technical skills mentioned.
         
-        Return the result STRICTLY as a JSON object like this:
-        {{"email": "careers@example.com", "skills": ["Java", "Spring"]}}
-        If no email is found, set email to null.
+        Return JSON ONLY: {{"email": "...", "skills": ["...", "..."]}}
         """
         
         ai_response = model.generate_content([prompt, img])
-        data = json.loads(ai_response.text.strip(' `json\n'))
+        # Strip potential markdown formatting from AI response
+        clean_json = ai_response.text.strip().replace('```json', '').replace('```', '').strip()
+        data = json.loads(clean_json)
         return data.get('email'), ", ".join(data.get('skills', []))
     except Exception as e:
-        print(f"   [Gemini Error] {e}")
+        print(f"   [AI Error] {e}")
         return None, ""
 
 def save_job(job_data):
@@ -96,23 +92,17 @@ def get_vacancy_image(job_link):
         images = []
         for img in soup.find_all('img'):
             src = img.get('src', '')
-            # Filter out known junk/system icons
             if any(junk in src.lower() for junk in ['info.png', 'local.jpg', 'loading.gif', 'application.png', '_small']):
                 continue
-                
             if '/vacancies/' in src or '/logo/' in src:
                 full_src = src
                 if not src.startswith('http'):
                     full_src = 'https://www.topjobs.lk' + src if src.startswith('/') else 'https://www.topjobs.lk/employer/' + src
                 images.append(full_src)
         
-        # PRIORITY LOGIC:
-        # 1. Images with a numeric subdirectory (e.g., /logo/000000492/...) are usually the actual Ads
         for img in images:
             if re.search(r'/logo/\d+/', img) or '/vacancies/' in img:
                 return img
-        
-        # 2. Fallback to the largest image found if no clear ad subdirectory
         return images[0] if images else None
     except: return None
 
@@ -145,19 +135,15 @@ def process_single_job(tr, alert_pattern):
         if not match: return None
         i, ac, jc, ec, _id = match.groups()
         job_link = f"../employer/JobAdvertismentServlet?rid={i}&ac={ac}&jc={jc}&ec={ec}&pg=applicant/vacancybyfunctionalarea.jsp"
-        
         tds = tr.find_all('td')
         if len(tds) < 3: return False
         title_cell = tds[2]
         job_title = title_cell.find('h2').get_text(strip=True) if title_cell.find('h2') else "Untitled"
         company_name = title_cell.find('h1').get_text(strip=True) if title_cell.find('h1') else "Unknown"
-        
         if any(f.lower() in job_title.lower() for f in FORBIDDEN_TITLES): return False
 
         print(f"AI Analyzing: {job_title} at {company_name}")
         image_url = get_vacancy_image(job_link)
-        
-        # USE GEMINI VISION
         contact_email, ai_description = analyze_job_with_gemini(image_url, job_title)
         
         search_blob = f"{job_title} {ai_description}".lower()
@@ -171,7 +157,7 @@ def process_single_job(tr, alert_pattern):
             })
             return True
         return False
-    except Exception as e: print(f"Worker Error: {e}"); return False
+    except Exception as e: return False
 
 def auto_apply_jobs():
     print("\n--- Starting Auto-Apply Sequence ---")
@@ -191,7 +177,7 @@ def auto_apply_jobs():
         if conn is not None: conn.close()
 
 def scrape_topjobs():
-    print(f"Scraping TopJobs (Gemini AI Edition)...")
+    print(f"Scraping TopJobs IT Categories (Clean Edition)...")
     for category in CATEGORIES:
         print(f"--- Category: {category} ---")
         try:

@@ -34,24 +34,30 @@ FORBIDDEN_SKILLS = ['.net', 'c#', 'php', 'laravel', 'flutter', 'ruby', 'c++', 'a
 
 def extract_email(text):
     if not text: return None
-    # Pre-clean known artifacts
+    
+    # 1. Pre-clean: Replace common OCR misreads with standard characters
     clean_text = re.sub(r'[\(\[]at[\)\]]', '@', text, flags=re.IGNORECASE)
     clean_text = clean_text.replace('©', '@').replace('©', '@')
     
-    # Ultra-Permissive Regex: Handles artifacts like careers@'1billion.com or careers | @ 1billion . com
-    pattern = r'[a-zA-Z0-9._+-]+\s*[@©]\s*[a-zA-Z0-9\-\'\‘\’\|._\s]+[\.\,]\s*[a-zA-Z0-9-.]+'
+    # 2. Ultra-Permissive Regex: Handles artifacts like careers@'1billion.com or careers | @ 1billion . com
+    pattern = r'[a-zA-Z0-9._+-]+\s*[@]\s*[a-zA-Z0-9\-\'\‘\’\|._\s]+[\.\,]\s*[a-zA-Z0-9-.]+'
     matches = re.findall(pattern, clean_text)
     
     if matches:
-        email = re.sub(r'[\s\'\‘\’\|]', '', matches[0]).replace('©', '@').replace(',', '.').lower()
+        # Clean the match: Remove spaces and OCR trash characters (quotes, pipes)
+        email = re.sub(r'[\s\'\‘\’\|]', '', matches[0])
         if '@' in email and '.' in email:
+            # FIX: Common Sri Lankan TLD misreads (e.g., .Ik, .1k -> .lk)
+            email = re.sub(r'\.(?:ik|1k|lk)$', '.lk', email, flags=re.I)
             email = email.rstrip('.,')
-            return email
+            return email.lower()
             
-    # Fallback Keyword Search
+    # 3. Fallback: Keyword-based search
     kw_match = re.search(r'(?:careers|hr|apply|email|resume|cv)\s*[:\-to]*\s*([a-zA-Z0-9._+\-\s\'\|]+@[a-zA-Z0-9\-\s._]+[\.\,][a-zA-Z0-9\-.]+)', clean_text, re.I)
     if kw_match:
-        return re.sub(r'[\s\'\‘\’\|]', '', kw_match.group(1)).lower().rstrip('.,')
+        email = re.sub(r'[\s\'\‘\’\|]', '', kw_match.group(1)).lower()
+        email = re.sub(r'\.(?:ik|1k|lk)$', '.lk', email, flags=re.I)
+        return email.rstrip('.,')
 
     return None
 
@@ -99,13 +105,9 @@ def get_clean_vacancy_content(job_link):
                 enhancer = ImageEnhance.Contrast(img)
                 img = enhancer.enhance(2.0)
                 ocr_text = pytesseract.image_to_string(img, config='--psm 3')
-                
-                # DEBUG: Log OCR progress
-                if ocr_text:
-                    print(f"   [Debug] OCR success ({len(ocr_text)} chars).")
             except: pass
                 
-        # If OCR text is weak, supplement with middle table text
+        # Supplement with middle table text
         main_table = soup.find('table', class_='bx')
         table_text = main_table.get_text(separator=' ', strip=True) if main_table else ""
         
